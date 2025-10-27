@@ -44,14 +44,18 @@ streamlit run main.py
 4. In the app UI (sidebar):
 - Enter your API key (if not set as env var).
 - Select an embedding model (default is `openai.text-embedding-3-small`). The app will attempt the selected model and automatically fall back to `openai.text-embedding-3-small` if the chosen model is not available for your key.
+![alt text](screenshot/1.png)
+5. Upload one or more `.txt` or `.pdf` files, click **Parse & Index Documents** and wait for indexing to finish. 
+![alt text](screenshot/2.png)
 
-5. Upload one or more `.txt` or `.pdf` files, click **Parse & Index Documents** and wait for indexing to finish. Then ask questions in the chat box.
+6. Then ask questions in the chat box. Here is a sample chat record.
+![alt text](screenshot/3.png)
 
 ## Configuration changes made
 
-- `requirements.txt` was updated to include `chromadb` (to support a persistent Chroma vector DB). This is the only required dependency change; the file contains comments to indicate the addition.
+- `requirements.txt` was updated to include `chromadb` (to support a persistent Chroma vector DB). 
 - Added helper scripts under `scripts/`:
-	- `check_models.py` — enumerates models available to the API key and categorizes them.
+	- `check_models.py` — check models available to the API key and categorizes them.
 	- `models_available.json` — example output of model detection saved during development.
 
 ## Implementation notes

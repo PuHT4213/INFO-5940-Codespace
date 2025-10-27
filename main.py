@@ -22,7 +22,8 @@ with st.sidebar:
     # Embedding model selection (the code prefixes with 'openai.' when needed)
     embedding_model = st.selectbox("Embedding model", options=["text-embedding-3-small", "text-embedding-3-large"], index=0)
     st.markdown("---")
-    st.markdown("Notes: make sure your API key has embedding and chat access. If you prefer to use an environment variable, set OPENAI_API_KEY.")
+    st.markdown("Notes: If you prefer to use an environment variable, set OPENAI_API_KEY. ")
+    st.markdown("Make sure you have embedding and chat access.")
 
 # File uploader
 uploaded_files = st.file_uploader("Upload .txt or .pdf files", type=["txt", "pdf"], accept_multiple_files=True)
