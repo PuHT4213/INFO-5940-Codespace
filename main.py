@@ -13,18 +13,18 @@ st.set_page_config(page_title="RAG Chat (INFO-5940)", layout="wide")
 st.title("Retrieval-Augmented Generation (RAG) Chat")
 st.markdown("Upload .txt or .pdf files, build a vector index, and ask questions grounded in your documents.")
 
-# Sidebar configuration: API key, persistence path, and model selection
+# Sidebar: API key, persistence path and model selection
 with st.sidebar:
     st.header("Configuration")
-    # Enter your OpenAI API key (or set OPENAI_API_KEY in the environment).
+    # OpenAI API key (or set OPENAI_API_KEY in env)
     api_key = st.text_input("OpenAI API Key", type="password", value=os.environ.get("OPENAI_API_KEY", ""))
-    # Where Chroma will persist the vector DB
+    # Chroma persist directory
     persist_directory = st.text_input("Chroma persist directory", value="data/chroma_db")
-    # Model selection for generation (display labels correspond to OpenAI model ids)
+    # Model selection
     model_name = st.selectbox("Model", options=["gpt-4.1", "gpt-4o", "gpt-5"], index=0)
-    # Embedding model selection (the code prefixes with 'openai.' when needed)
+    # Embedding model
     embedding_model = st.selectbox("Embedding model", options=["text-embedding-3-small", "text-embedding-3-large"], index=0)
-    # Quick debug: allow clearing the chat history from the UI if it becomes malformed
+    # Reset chat history if needed
     if st.button("Reset chat history"):
         st.session_state.chat_history = []
         st.success("Chat history cleared")
@@ -43,7 +43,7 @@ if "vectordb_path" not in st.session_state:
 if "chain" not in st.session_state:
     st.session_state.chain = None
 if "chat_history" not in st.session_state:
-    # chat_history stores sequential Q/A pairs for display and to pass to the chain
+    # store conversation as BaseMessage list
     st.session_state.chat_history = []
 if "uploaded_files" not in st.session_state:
     st.session_state.uploaded_files = []
@@ -65,16 +65,13 @@ if uploaded_files:
                 else:
                     st.session_state.uploaded_files = [f.name for f in uploaded_files]
 
-                    # Ensure model names use the OpenAI identifier prefix where
-                    # appropriate. The UI exposes short names for convenience;
-                    # here we add the 'openai.' prefix if the user did not.
+                    # Ensure model names use OpenAI identifier prefix
                     if not embedding_model.startswith("openai."):
                         embedding_model = f"openai.{embedding_model}"
                     if not model_name.startswith("openai."):
                         model_name = f"openai.{model_name}"
 
-                    # Build the vector store (embeddings + Chroma) and create
-                    # the conversational retrieval chain for Q/A.
+                    # Build vector store and create the conversational chain
                     vectordb = create_vectorstore_from_docs(
                         docs,
                         persist_directory=persist_directory,
@@ -106,12 +103,12 @@ else:
     if st.session_state.chain is None:
         st.error("Chain initialization failed. Re-index the documents.")
     else:
-        # Render the full conversation history
+    # Render conversation history
         history = st.session_state.get("chat_history", [])
         if history:
             for msg in history:
                 try:
-                    # If it's a BaseMessage-like object, render by its type
+                    # Render BaseMessage or legacy formats
                     if hasattr(msg, "content") and hasattr(msg, "type"):
                         role = getattr(msg, "type", "human")
                         # map language model message types to Streamlit chat roles
@@ -120,7 +117,7 @@ else:
                         else:
                             st.chat_message("assistant").write(msg.content)
                     elif isinstance(msg, dict):
-                        # legacy dict format
+                        # legacy dict
                         user_msg = msg.get("user", "")
                         assistant_msg = msg.get("assistant", "")
                         if user_msg:
@@ -128,7 +125,7 @@ else:
                         if assistant_msg:
                             st.chat_message("assistant").write(assistant_msg)
                     elif isinstance(msg, (list, tuple)) and len(msg) >= 2:
-                        # legacy tuple format: (user, assistant)
+                        # legacy tuple (user, assistant)
                         user_msg, assistant_msg = msg[0], msg[1]
                         if user_msg:
                             st.chat_message("user").write(user_msg)
@@ -144,7 +141,7 @@ else:
 
         user_question = st.chat_input("Ask a question about the uploaded documents")
         if user_question:
-            # Display the user's message in the chat UI
+            # show user's message
             st.chat_message("user").write(user_question)
             with st.spinner("Generating answer..."):
                 try:
@@ -152,11 +149,7 @@ else:
                     raw_history = st.session_state.get("chat_history", [])
 
                     def normalize_chat_history_to_messages(ch) -> List[BaseMessage]:
-                        """Normalize stored history into a list of BaseMessage objects.
-
-                        Converts legacy tuple/dict/string formats into a sequence of
-                        HumanMessage and AIMessage instances in chronological order.
-                        """
+                        """Convert stored history into a list of HumanMessage/AIMessage."""
                         out: List[BaseMessage] = []
                         if not ch:
                             return out
@@ -232,18 +225,17 @@ else:
                     #         template = getattr(prompt_obj, "template", "")
                     #         print(template)
 
-                    # Debug: ensure we have messages list
+                    # Debug prints (message types/preview)
                     print("DEBUG: calling chain with chat_history messages type:", type(formatted_chat_history))
                     print("DEBUG: chat_history messages preview:", [(type(m), getattr(m, 'content', None)) for m in formatted_chat_history][:10])
 
-                    # Replace session_state.chat_history with normalized BaseMessage list
+                    # Update session history to normalized messages
                     st.session_state.chat_history = formatted_chat_history
 
-                    # If the chain has memory, sync existing session history into it once
+                    # Sync messages into chain memory once
                     chain_obj = st.session_state.chain
                     try:
                         if getattr(chain_obj, "memory", None) and not st.session_state.get("memory_synced", False):
-                            # chain_obj.memory.chat_memory exposes add_messages
                             chat_mem = getattr(chain_obj.memory, "chat_memory", None)
                             if chat_mem and hasattr(chat_mem, "add_messages"):
                                 print("SYNC: adding messages to chain.memory.chat_memory")
@@ -252,7 +244,7 @@ else:
                     except Exception as _e:
                         print("SYNC error:", _e)
 
-                    # Now call the chain with only the question; memory will be used by the chain
+                    # Call chain using memory-managed history
                     response = st.session_state.chain.invoke({"question": user_question})
                     print("question:", user_question)  # Debug log
                     print("chat_history:", formatted_chat_history)  # Debug log
@@ -283,8 +275,7 @@ else:
                             snippet = content[:400].replace("\n", " ")
                             st.caption(snippet + ("..." if len(content) > 400 else ""))
 
-                    # Store the Q/A in session state as BaseMessage objects
-                    # Append human then assistant so the history is a sequence of messages
+                    # Append question/answer as messages
                     st.session_state.chat_history.append(HumanMessage(content=str(user_question)))
                     st.session_state.chat_history.append(AIMessage(content=str(answer)))
 

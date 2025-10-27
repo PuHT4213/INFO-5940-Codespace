@@ -15,12 +15,7 @@ from pypdf import PdfReader
 
 
 def extract_text_from_pdf(file) -> str:
-    """Extract text from a PDF file-like object.
-
-    This utility uses pypdf.PdfReader to extract text from each page and
-    concatenates page text using newlines. If extraction fails, an empty
-    string is returned so the caller can decide how to proceed.
-    """
+    """Extract text from a PDF file-like object. Returns empty string on error."""
     try:
         reader = PdfReader(file)
         text = []
@@ -36,17 +31,7 @@ def extract_text_from_pdf(file) -> str:
 
 
 def load_documents_from_uploads(uploaded_files) -> List[Document]:
-    """Convert uploaded Streamlit files into a list of LangChain Documents.
-
-    Supported formats: .txt and .pdf. Text files are decoded (utf-8 with
-    a latin-1 fallback). PDFs are processed with pypdf. Each document is
-    split into fixed-size overlapping chunks using RecursiveCharacterTextSplitter
-    so that retrieval returns concise, focused snippets.
-
-    Returns:
-        List[Document]: Each Document contains a chunk of text and metadata
-        with the original filename and chunk index.
-    """
+    """Convert uploaded .txt/.pdf files into chunked LangChain Documents."""
     docs: List[Document] = []
     for uploaded_file in uploaded_files:
         filename = uploaded_file.name
@@ -92,20 +77,7 @@ def create_vectorstore_from_docs(
     openai_api_key: str | None = None,
     embedding_model: str = "openai.text-embedding-3-small",
 ) -> Chroma:
-    """Create a Chroma vectorstore from Documents and persist it.
-
-    Args:
-        docs: List of LangChain Document objects (typically produced by
-            load_documents_from_uploads).
-        persist_directory: Directory where Chroma will persist its data.
-        openai_api_key: Optional OpenAI API key used by OpenAIEmbeddings.
-        embedding_model: Embedding model name to use. The function will
-            attempt the requested model and fall back to
-            `openai.text-embedding-3-small` if necessary.
-
-    Returns:
-        Chroma: the instantiated (and persisted) vectorstore.
-    """
+    """Create and return a persisted Chroma vectorstore from docs."""
     if not docs:
         raise ValueError("No documents to index")
 
@@ -133,25 +105,13 @@ def create_vectorstore_from_docs(
 def get_conversational_chain(
     vectordb: Chroma, openai_api_key: str | None = None, model_name: str = "gpt-3.5-turbo", use_memory: bool = True
 ) -> ConversationalRetrievalChain:
-    """Construct a ConversationalRetrievalChain.
-
-    If use_memory is True, attach a ConversationBufferMemory with memory_key="chat_history"
-    so the chain will maintain internal conversation state. Default is False to keep
-    the application managing history externally.
-    """
+    """Create a ConversationalRetrievalChain with optional memory."""
     llm = ChatOpenAI(model_name=model_name, temperature=0, openai_api_key=openai_api_key)
     retriever = vectordb.as_retriever(search_kwargs={"k": 4})
 
     memory = None
     if use_memory:
-        # Configure memory so it knows which input/output keys to store.
-        # The ConversationalRetrievalChain created below returns multiple
-        # output keys (e.g. 'answer' and 'source_documents'), which will
-        # cause BaseChatMemory to raise a ValueError unless we explicitly
-        # set the output_key here. We also set input_key to 'question'
-        # because that's the key we pass into the chain when calling it.
-            # return_messages=True enables memory to provide list[BaseMessage]
-            # under 'chat_history' and knows which input/output to save.
+        # Set up conversation memory to retain chat history
         memory = ConversationBufferMemory(
             memory_key="chat_history",
                 return_messages=True,
@@ -159,8 +119,7 @@ def get_conversational_chain(
             output_key="answer",
         )
 
-    # Build prompts: ensure both the question-condensing prompt and the
-    # QA prompt include the chat history variable so the chain will use it.
+    # Use condense prompt and a QA prompt that include chat_history
     condense_prompt = CONDENSE_QUESTION_PROMPT
 
     qa_template = (
