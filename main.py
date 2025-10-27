@@ -96,11 +96,7 @@ else:
     if st.session_state.chain is None:
         st.error("Chain initialization failed. Re-index the documents.")
     else:
-        # Render the full conversation history stored in session state so
-        # that previous user and assistant turns persist across reruns.
-        # The app stores history as a list of dicts for display:
-        #   [{'user': ..., 'assistant': ...}, ...]
-        # But the history may also be in tuple form (user, assistant).
+        # Render the full conversation history
         history = st.session_state.get("chat_history", [])
         if history:
             for turn in history:
@@ -130,16 +126,7 @@ else:
             st.chat_message("user").write(user_question)
             with st.spinner("Generating answer..."):
                 try:
-                    # The chain is stateless regarding memory, so we pass the
-                    # application-managed chat history explicitly. LangChain's
-                    # conversational chains expect the history in one of a few
-                    # formats (commonly a list of (user, assistant) tuples or
-                    # a list of Message objects). During the app flow we store
-                    # a user-friendly list of dicts for display:
-                    #   [{'user': ..., 'assistant': ...}, ...]
-                    # Convert that dict-list to the tuple-list format when
-                    # calling the chain to avoid "Unsupported chat history"
-                    # errors.
+                    # Prepare chat history in the format expected by the chain
                     raw_history = st.session_state.get("chat_history", [])
                     if raw_history and isinstance(raw_history, list) and isinstance(raw_history[0], dict):
                         formatted_chat_history = [
