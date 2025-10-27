@@ -51,6 +51,8 @@ streamlit run main.py
 6. Then ask questions in the chat box. Here is a sample chat record.
 ![alt text](screenshot/3.png)
 
+7. The app will keep chat history in the session state. To clear the chat history, click the **Clear Chat History** button in the sidebar.
+
 ## Configuration changes made
 
 - `requirements.txt` was updated to include `chromadb` (to support a persistent Chroma vector DB). 

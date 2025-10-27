@@ -7,6 +7,8 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.chat_models import ChatOpenAI
 from langchain.vectorstores import Chroma
 from langchain.chains import ConversationalRetrievalChain
+from langchain.chains.conversational_retrieval.prompts import CONDENSE_QUESTION_PROMPT
+from langchain_core.prompts.prompt import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
 from pypdf import PdfReader
@@ -129,25 +131,53 @@ def create_vectorstore_from_docs(
 
 
 def get_conversational_chain(
-    vectordb: Chroma, openai_api_key: str | None = None, model_name: str = "gpt-3.5-turbo"
+    vectordb: Chroma, openai_api_key: str | None = None, model_name: str = "gpt-3.5-turbo", use_memory: bool = True
 ) -> ConversationalRetrievalChain:
-    """Construct a ConversationalRetrievalChain for retrieval-augmented answers.
+    """Construct a ConversationalRetrievalChain.
 
-    Notes:
-        - The chain is created without attaching LangChain memory to avoid
-          ambiguity around which output key to store (the chain returns both
-          `answer` and `source_documents`). Instead, the application manages
-          chat history in Streamlit's session state and passes it in at call time.
-        - The retriever's `k` parameter controls how many top chunks are
-          retrieved for each question; it is set to 4 here but can be tuned.
+    If use_memory is True, attach a ConversationBufferMemory with memory_key="chat_history"
+    so the chain will maintain internal conversation state. Default is False to keep
+    the application managing history externally.
     """
     llm = ChatOpenAI(model_name=model_name, temperature=0, openai_api_key=openai_api_key)
     retriever = vectordb.as_retriever(search_kwargs={"k": 4})
 
+    memory = None
+    if use_memory:
+        # Configure memory so it knows which input/output keys to store.
+        # The ConversationalRetrievalChain created below returns multiple
+        # output keys (e.g. 'answer' and 'source_documents'), which will
+        # cause BaseChatMemory to raise a ValueError unless we explicitly
+        # set the output_key here. We also set input_key to 'question'
+        # because that's the key we pass into the chain when calling it.
+            # return_messages=True enables memory to provide list[BaseMessage]
+            # under 'chat_history' and knows which input/output to save.
+        memory = ConversationBufferMemory(
+            memory_key="chat_history",
+                return_messages=True,
+            input_key="question",
+            output_key="answer",
+        )
+
+    # Build prompts: ensure both the question-condensing prompt and the
+    # QA prompt include the chat history variable so the chain will use it.
+    condense_prompt = CONDENSE_QUESTION_PROMPT
+
+    qa_template = (
+        "You are an assistant that answers questions based on provided context and the recent chat history."
+        "\n\nChat history:\n{chat_history}\n\nContext:\n{context}\n\nQuestion: {question}\nHelpful Answer:"
+    )
+    qa_prompt = PromptTemplate(template=qa_template, input_variables=["context", "question", "chat_history"])
+
+    # Pass our custom prompts into the chain factory so both question generation
+    # and final answering will see the chat history.
     qa_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=retriever,
+        condense_question_prompt=condense_prompt,
+        combine_docs_chain_kwargs={"prompt": qa_prompt},
         return_source_documents=True,
         output_key="answer",
+        memory=memory,
     )
     return qa_chain

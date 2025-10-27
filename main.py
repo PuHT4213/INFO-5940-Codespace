@@ -4,6 +4,9 @@ from typing import List
 
 from rag_utils import load_documents_from_uploads, create_vectorstore_from_docs, get_conversational_chain
 
+# Use BaseMessage objects for chat history to match LangChain expectations
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+
 
 st.set_page_config(page_title="RAG Chat (INFO-5940)", layout="wide")
 
@@ -21,6 +24,10 @@ with st.sidebar:
     model_name = st.selectbox("Model", options=["gpt-4.1", "gpt-4o", "gpt-5"], index=0)
     # Embedding model selection (the code prefixes with 'openai.' when needed)
     embedding_model = st.selectbox("Embedding model", options=["text-embedding-3-small", "text-embedding-3-large"], index=0)
+    # Quick debug: allow clearing the chat history from the UI if it becomes malformed
+    if st.button("Reset chat history"):
+        st.session_state.chat_history = []
+        st.success("Chat history cleared")
     st.markdown("---")
     st.markdown("Notes: If you prefer to use an environment variable, set OPENAI_API_KEY. ")
     st.markdown("Make sure you have embedding and chat access.")
@@ -81,6 +88,9 @@ if uploaded_files:
                         vectordb, openai_api_key=api_key or None, model_name=model_name
                     )
                     st.session_state.chain = chain
+                    # Mark memory sync flag so we can populate chain.memory once
+                    # from any existing session_state.chat_history on first use.
+                    st.session_state.memory_synced = False
                     st.success("Indexing complete. You can now ask questions in the chat below.")
             except Exception as e:
                 # Surface any errors during parsing/indexing to the user in the UI
@@ -99,25 +109,37 @@ else:
         # Render the full conversation history
         history = st.session_state.get("chat_history", [])
         if history:
-            for turn in history:
+            for msg in history:
                 try:
-                    if isinstance(turn, dict):
-                        user_msg = turn.get("user", "")
-                        assistant_msg = turn.get("assistant", "")
-                    elif isinstance(turn, (list, tuple)) and len(turn) >= 2:
-                        user_msg, assistant_msg = turn[0], turn[1]
+                    # If it's a BaseMessage-like object, render by its type
+                    if hasattr(msg, "content") and hasattr(msg, "type"):
+                        role = getattr(msg, "type", "human")
+                        # map language model message types to Streamlit chat roles
+                        if role in ("human", "user"):
+                            st.chat_message("user").write(msg.content)
+                        else:
+                            st.chat_message("assistant").write(msg.content)
+                    elif isinstance(msg, dict):
+                        # legacy dict format
+                        user_msg = msg.get("user", "")
+                        assistant_msg = msg.get("assistant", "")
+                        if user_msg:
+                            st.chat_message("user").write(user_msg)
+                        if assistant_msg:
+                            st.chat_message("assistant").write(assistant_msg)
+                    elif isinstance(msg, (list, tuple)) and len(msg) >= 2:
+                        # legacy tuple format: (user, assistant)
+                        user_msg, assistant_msg = msg[0], msg[1]
+                        if user_msg:
+                            st.chat_message("user").write(user_msg)
+                        if assistant_msg:
+                            st.chat_message("assistant").write(assistant_msg)
                     else:
-                        # Fallback: attempt attribute access for message-like
-                        user_msg = getattr(turn, "user", str(turn))
-                        assistant_msg = getattr(turn, "assistant", "")
-
-                    if user_msg:
-                        st.chat_message("user").write(user_msg)
-                    if assistant_msg:
-                        st.chat_message("assistant").write(assistant_msg)
+                        # Fallback: string or unknown object
+                        text = str(msg)
+                        st.chat_message("assistant").write(text)
                 except Exception:
-                    # If any single turn fails to render, skip it and
-                    # continue rendering the rest of the history.
+                    # If any single turn fails to render, skip it and continue
                     continue
 
         user_question = st.chat_input("Ask a question about the uploaded documents")
@@ -128,20 +150,112 @@ else:
                 try:
                     # Prepare chat history in the format expected by the chain
                     raw_history = st.session_state.get("chat_history", [])
-                    if raw_history and isinstance(raw_history, list) and isinstance(raw_history[0], dict):
-                        formatted_chat_history = [
-                            (turn.get("user", ""), turn.get("assistant", "")) for turn in raw_history
-                        ]
-                    else:
-                        # Already in an acceptable format or empty
-                        formatted_chat_history = raw_history
 
-                    response = st.session_state.chain(
-                        {
-                            "question": user_question,
-                            "chat_history": formatted_chat_history,
-                        }
-                    )
+                    def normalize_chat_history_to_messages(ch) -> List[BaseMessage]:
+                        """Normalize stored history into a list of BaseMessage objects.
+
+                        Converts legacy tuple/dict/string formats into a sequence of
+                        HumanMessage and AIMessage instances in chronological order.
+                        """
+                        out: List[BaseMessage] = []
+                        if not ch:
+                            return out
+
+                        # If a single string, attempt to split into human/assistant lines
+                        if isinstance(ch, str):
+                            parts = [p.strip() for p in ch.split("\n") if p.strip()]
+                            # If formatted with Human:/Assistant: markers, parse them
+                            if parts and (parts[0].startswith("Human:") or parts[0].startswith("Assistant:")):
+                                i = 0
+                                while i < len(parts):
+                                    line = parts[i]
+                                    if line.startswith("Human:"):
+                                        human = line[len("Human:"):].strip()
+                                        out.append(HumanMessage(content=human))
+                                        i += 1
+                                    elif line.startswith("Assistant:"):
+                                        ai = line[len("Assistant:"):].strip()
+                                        out.append(AIMessage(content=ai))
+                                        i += 1
+                                    else:
+                                        out.append(HumanMessage(content=line))
+                                        i += 1
+                                return out
+                            # fallback: treat the whole string as a single human message
+                            return [HumanMessage(content=ch)]
+
+                        # If it's a list, normalize each element
+                        if isinstance(ch, list):
+                            for item in ch:
+                                if isinstance(item, tuple) and len(item) >= 2:
+                                    human, ai = item[0], item[1]
+                                    out.append(HumanMessage(content=str(human)))
+                                    # append assistant only if present
+                                    if ai is not None and str(ai) != "":
+                                        out.append(AIMessage(content=str(ai)))
+                                elif isinstance(item, dict):
+                                    out.append(HumanMessage(content=str(item.get("user", ""))))
+                                    assistant = item.get("assistant", "")
+                                    if assistant:
+                                        out.append(AIMessage(content=str(assistant)))
+                                elif hasattr(item, "content") and hasattr(item, "type"):
+                                    # Already a BaseMessage-like object
+                                    out.append(item)
+                                elif isinstance(item, str):
+                                    # try parse simple Human/Assistant markers
+                                    parts = [p.strip() for p in item.split("\n") if p.strip()]
+                                    if len(parts) >= 2 and (parts[0].startswith("Human:") or parts[1].startswith("Assistant:")):
+                                        h = parts[0][len("Human:"):].strip() if parts[0].startswith("Human:") else parts[0]
+                                        a = parts[1][len("Assistant:"):].strip() if parts[1].startswith("Assistant:") else parts[1]
+                                        out.append(HumanMessage(content=h))
+                                        out.append(AIMessage(content=a))
+                                    else:
+                                        out.append(HumanMessage(content=item))
+                                else:
+                                    out.append(HumanMessage(content=str(item)))
+                            return out
+
+                        # Fallback: coerce into a single human message
+                        return [HumanMessage(content=str(ch))]
+
+                    print("DEBUG: raw_history type before normalize:", type(raw_history))
+                    print("DEBUG: raw_history preview:", raw_history if isinstance(raw_history, (list, str)) else str(raw_history)[:200])
+                    formatted_chat_history = normalize_chat_history_to_messages(raw_history)
+
+                    # # print chain prompt (dump prompt templates / input vars)
+                    # qg = getattr(st.session_state.chain, "question_generator", None)
+                    # if qg:
+                    #     llm_chain = getattr(qg, "llm_chain", None)
+                    #     prompt_obj = getattr(llm_chain, "prompt", None)
+                    #     print("Prompt used by the chain's question generator:")
+                    #     if prompt_obj:
+                    #         template = getattr(prompt_obj, "template", "")
+                    #         print(template)
+
+                    # Debug: ensure we have messages list
+                    print("DEBUG: calling chain with chat_history messages type:", type(formatted_chat_history))
+                    print("DEBUG: chat_history messages preview:", [(type(m), getattr(m, 'content', None)) for m in formatted_chat_history][:10])
+
+                    # Replace session_state.chat_history with normalized BaseMessage list
+                    st.session_state.chat_history = formatted_chat_history
+
+                    # If the chain has memory, sync existing session history into it once
+                    chain_obj = st.session_state.chain
+                    try:
+                        if getattr(chain_obj, "memory", None) and not st.session_state.get("memory_synced", False):
+                            # chain_obj.memory.chat_memory exposes add_messages
+                            chat_mem = getattr(chain_obj.memory, "chat_memory", None)
+                            if chat_mem and hasattr(chat_mem, "add_messages"):
+                                print("SYNC: adding messages to chain.memory.chat_memory")
+                                chat_mem.add_messages(st.session_state.chat_history)
+                                st.session_state.memory_synced = True
+                    except Exception as _e:
+                        print("SYNC error:", _e)
+
+                    # Now call the chain with only the question; memory will be used by the chain
+                    response = st.session_state.chain.invoke({"question": user_question})
+                    print("question:", user_question)  # Debug log
+                    print("chat_history:", formatted_chat_history)  # Debug log
 
                     if isinstance(response, dict):
                         answer = response.get("answer") or response.get("result") or str(response)
@@ -169,8 +283,10 @@ else:
                             snippet = content[:400].replace("\n", " ")
                             st.caption(snippet + ("..." if len(content) > 400 else ""))
 
-                    # Store the Q/A in session state for future turns and display
-                    st.session_state.chat_history.append({"user": user_question, "assistant": answer})
+                    # Store the Q/A in session state as BaseMessage objects
+                    # Append human then assistant so the history is a sequence of messages
+                    st.session_state.chat_history.append(HumanMessage(content=str(user_question)))
+                    st.session_state.chat_history.append(AIMessage(content=str(answer)))
 
                 except Exception as e:
                     st.exception(e)
