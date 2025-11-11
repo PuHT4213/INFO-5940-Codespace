@@ -13,7 +13,8 @@
 
 	"remoteEnv": {
 		"API_KEY": "",
-		"OPENAI_API_KEY": "",
+		"OPENAI_API_KEY": "sk-oKAB5AUL5hhnOyFrSz-EUg",
+		"TAVILY_API_KEY": "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",
 		"BASE_URL": "https://api.ai.it.cornell.edu/",
 		"OPENAI_BASE_URL": "https://api.ai.it.cornell.edu/",
 		"TZ": "America/New_York"
